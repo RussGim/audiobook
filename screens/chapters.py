@@ -1,4 +1,4 @@
-BaseScreenimport pygame
+import pygame
 import os
 from screens.base import BaseScreen
 from ui.colours import *
@@ -62,12 +62,14 @@ class ChaptersScreen(BaseScreen):
                 chapter = self._chapters[idx]
                 self.list.set_selected(idx)
                 name = chapter.rsplit(".", 1)[0]
-                from utils.speech import speak_and_wait
-                speak_and_wait(f"Playing {name}",
-                            stop_mpd=True)
+                from utils.speech import \
+                    speak_and_wait
+                speak_and_wait(
+                    f"Playing {name}",
+                    stop_mpd=True)
                 self.app.mpd.play_chapter(
                     self._book, chapter)
-return "go_player"
+                return "go_player"
         return None
 
     def handle_touch_move(self, x, y):
