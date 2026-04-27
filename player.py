@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+import pygame
+import sys
+import os
+import time
+
+SCREEN_W   = 1280
+SCREEN_H   = 720
+FPS        = 30
+FULLSCREEN = False  # Set True on Pi
+
+from ui               import fonts
+from ui.colours       import *
+from ui.nav_bar       import NavBar
+from constants        import (SCREEN_BOOKS,
+                               SCREEN_PLAYER,
+                               SCREEN_CHAPTERS,
+                               SCREEN_SETTINGS,
+                               SCREEN_CLOCK,
+                               SCREEN_RADIO,
+                               SCREEN_HUGE)
+from ui               import widgets
+from mpd_client       import MPDClient
+from bluetooth        import BluetoothManager
+from utils            import speech as speech_module
+from utils.speech     import speak, set_mpd
+from utils.state      import (load as load_state,
+                               save as save_state)
+from utils.usb_manager import USBManager
+from screens.books    import BooksScreen
+from screens.player   import PlayerScreen
+from screens.chapters import ChaptersScreen
+from screens.settings import SettingsScreen
+from screens.clock    import ClockScreen
+from screens.radio    import RadioScreen
+from screens.huge     import HugeScreen
+
+class App:
+    def __init__(self):
+        pygame.init()
+        pygame.mouse.set_visible(True)
+        flags = pygame.FULLSCREEN if FULLSCREEN else 0
+        self.screen = pygame.display.set_mode(
+            (SCREEN_W, SCREEN_H), flags)
+        pygame.display.set_caption(
+            "Audiobook Player")
+        self.clock  = pygame.time.Clock()
+        fonts.init()
+
+        self.mpd       = MPDClient()
+        set_mpd(self.mpd)
+        self.bluetooth = BluetoothManager()
+        self.speech    = speech_module
+        self.state     = load_state()
+        self.nav       = NavBar(SCREEN_W, SCREEN_H)
+
+        self.screens = {
+            SCREEN_BOOKS:    BooksScreen(self),
+            SCREEN_PLAYER:   PlayerScreen(self),
+            SCREEN_CHAPTERS: ChaptersScreen(self),
+            SCREEN_SETTINGS: SettingsScreen(self),
+            SCREEN_CLOCK:    ClockScreen(self),
+            SCREEN_RADIO:    RadioScreen(self),
+            SCREEN_HUGE:     HugeScreen(self),
+        }
+
+        self._idle_timeout     = 60
+        self._last_touch       = time.time()
+        self._clock_active     = False
+        self._pre_clock_screen = SCREEN_PLAYER
+        self._last_eof         = False
+        self._last_save        = time.time()
+
+        # Start on player or books
+        use_large = self.state.get(
+            "large_screen", False)
+        if self.state.get("book"):
+            self._go_to(
+                SCREEN_HUGE if use_large
+                else SCREEN_PLAYER)
+            self._resume_last()
+        else:
+            self._go_to(SCREEN_BOOKS)
+
+        # USB manager — after _go_to so
+        # _current_screen is set
+        self.usb = USBManager(self.mpd)
+        self.usb.set_callback(self._on_usb_change)
+        self.usb.scan_once()
+        self.usb.start_monitor()
+
+    def _resume_last(self):
+        book     = self.state.get("book")
+        chapter  = self.state.get("chapter")
+        position = self.state.get("position", 0.0)
+        if book:
+            success = self.mpd.play_book(
+                book, chapter, position)
+            if success:
+                speak(f"Resuming "
+                      f"{os.path.basename(book)}")
+            else:
+                # Saved path no longer valid
+                self.state["book"]     = None
+                self.state["chapter"]  = None
+                self.state["position"] = 0.0
+                save_state(self.state)
+                self._go_to(SCREEN_BOOKS)
+
+    def _go_to(self, screen_idx):
+        if hasattr(self, "_current_screen"):
+            self.screens[
+                self._current_screen].on_exit()
+        self._current_screen = screen_idx
+        if screen_idx not in (
+                SCREEN_CLOCK, SCREEN_RADIO,
+                SCREEN_HUGE):
+            self.nav.current = screen_idx
+        elif screen_idx == SCREEN_HUGE:
+            self.nav.current = SCREEN_PLAYER
+        self.screens[screen_idx].on_enter()
+
+    def _nav_go(self, nav_r):
+        if nav_r == SCREEN_PLAYER and \
+           self.state.get("large_screen", False):
+            self._go_to(SCREEN_HUGE)
+        else:
+            self._go_to(nav_r)
+
+    def _handle_nav_result(self, result):
+        if result is None or result == -1:
+            return
+        if isinstance(result, int):
+            self._go_to(result)
+        elif result == "go_player":
+            use_large = self.state.get(
+                "large_screen", False)
+            self._go_to(
+                SCREEN_HUGE if use_large
+                else SCREEN_PLAYER)
+        elif result == "go_huge":
+            self._go_to(SCREEN_HUGE)
+        elif result == "go_normal_player":
+            self._go_to(SCREEN_PLAYER)
+        elif result == "swipe_left":
+            self._go_to(
+                (self._current_screen + 1) % 4)
+        elif result == "swipe_right":
+            self._go_to(
+                (self._current_screen - 1) % 4)
+
+    def _on_usb_change(self, drives):
+        if not hasattr(self, "_current_screen"):
+            return
+        if drives:
+            self.speech.speak(
+                "USB stick inserted",
+                resume=False)
+        else:
+            self.speech.speak(
+                "USB stick removed",
+                resume=False)
+            self.mpd.pause()
+        self.screens[SCREEN_BOOKS]._refresh()
+        if (self._current_screen in (
+                SCREEN_PLAYER, SCREEN_HUGE)
+                and self.mpd.state == "stop"):
+            self._go_to(SCREEN_BOOKS)
+
+    def _save_position(self):
+        if self.mpd.state == "play":
+            self.state["book"]     = self.mpd.book
+            self.state["chapter"]  = \
+                self.mpd.title + ".mp3"
+            self.state["position"] = self.mpd.elapsed
+            self.state["volume"]   = self.mpd.volume
+            save_state(self.state)
+
+    def _check_end_of_book(self):
+        is_stopped = (
+            self.mpd.state == "stop" and
+            self.mpd.track_num ==
+            self.mpd.track_total and
+            self.mpd.track_total > 0)
+        if is_stopped and not self._last_eof:
+            self._last_eof = True
+            speak("End of book")
+            self.state["position"] = 0.0
+            self.state["chapter"]  = None
+            save_state(self.state)
+            pygame.time.set_timer(
+                pygame.USEREVENT + 1, 3000, True)
+        elif not is_stopped:
+            self._last_eof = False
+
+    def _check_idle(self):
+        idle          = time.time() - self._last_touch
+        radio         = self.screens.get(SCREEN_RADIO)
+        radio_playing = (radio and
+                         radio._selected >= 0)
+        audio_playing = self.mpd.state == "play"
+        if (idle >= self._idle_timeout and
+                not self._clock_active and
+                not radio_playing and
+                not audio_playing):
+            self._clock_active     = True
+            self._pre_clock_screen = \
+                self._current_screen
+            self._go_to(SCREEN_CLOCK)
+
+    def _wake_from_clock(self):
+        self.screens[SCREEN_CLOCK].on_exit()
+        self._clock_active   = False
+        self._last_touch     = time.time()
+        self._current_screen = \
+            self._pre_clock_screen
+        if self._pre_clock_screen not in (
+                SCREEN_CLOCK, SCREEN_RADIO,
+                SCREEN_HUGE):
+            self.nav.current = self._pre_clock_screen
+        self.screens[
+            self._current_screen].on_enter()
+
+    def _is_huge(self):
+        return self._current_screen == SCREEN_HUGE
+
+    def run(self):
+        touch_down_pos = None
+        while True:
+            current = self.screens[
+                self._current_screen]
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self._save_position()
+                    pygame.quit()
+                    sys.exit()
+
+                if event.type == \
+                        pygame.USEREVENT + 1:
+                    if not self._clock_active:
+                        self._go_to(SCREEN_BOOKS)
+
+                if event.type == pygame.KEYDOWN:
+                    self._last_touch = time.time()
+                    if self._clock_active:
+                        self._wake_from_clock()
+                        continue
+                    if event.key == pygame.K_ESCAPE:
+                        self._save_position()
+                        pygame.quit()
+                        sys.exit()
+                    elif event.key == pygame.K_SPACE:
+                        self.mpd.toggle()
+                    elif event.key == pygame.K_LEFT:
+                        self.mpd.seek_back(30)
+                    elif event.key == pygame.K_RIGHT:
+                        self.mpd.seek_forward(30)
+                    elif event.key == pygame.K_n:
+                        self.mpd.next_track()
+                    elif event.key == pygame.K_p:
+                        self.mpd.prev_track()
+                    elif event.key == pygame.K_UP:
+                        self.mpd.set_volume(
+                            self.mpd.volume + 5)
+                    elif event.key == pygame.K_DOWN:
+                        self.mpd.set_volume(
+                            self.mpd.volume - 5)
+                    elif event.key == pygame.K_1:
+                        self._go_to(SCREEN_BOOKS)
+                    elif event.key == pygame.K_2:
+                        self._nav_go(SCREEN_PLAYER)
+                    elif event.key == pygame.K_3:
+                        self._go_to(SCREEN_CHAPTERS)
+                    elif event.key == pygame.K_4:
+                        self._go_to(SCREEN_SETTINGS)
+                    elif event.key == pygame.K_5:
+                        self._go_to(SCREEN_RADIO)
+                    elif event.key == pygame.K_6:
+                        self._go_to(SCREEN_HUGE)
+                    elif event.key == pygame.K_c:
+                        if self._clock_active:
+                            self._wake_from_clock()
+                        else:
+                            self._clock_active = True
+                            self._pre_clock_screen =\
+                                self._current_screen
+                            self._go_to(SCREEN_CLOCK)
+
+                elif event.type == \
+                        pygame.FINGERDOWN:
+                    self._last_touch = time.time()
+                    x = int(event.x * SCREEN_W)
+                    y = int(event.y * SCREEN_H)
+                    touch_down_pos = (x, y)
+                    if self._clock_active:
+                        pass
+                    elif self._is_huge():
+                        current.handle_touch_down(
+                            x, y)
+                    else:
+                        nav_r = \
+                            self.nav.handle_touch(
+                                x, y)
+                        if nav_r == -1:
+                            current.handle_touch_down(
+                                x, y)
+                        else:
+                            self._nav_go(nav_r)
+
+                elif event.type == pygame.FINGERUP:
+                    self._last_touch = time.time()
+                    x = int(event.x * SCREEN_W)
+                    y = int(event.y * SCREEN_H)
+                    if self._clock_active:
+                        self._wake_from_clock()
+                    else:
+                        result = \
+                            current.handle_touch_up(
+                                x, y)
+                        self._handle_nav_result(
+                            result)
+                    touch_down_pos = None
+
+                elif event.type == \
+                        pygame.FINGERMOTION:
+                    if not self._clock_active:
+                        x = int(event.x * SCREEN_W)
+                        y = int(event.y * SCREEN_H)
+                        current.handle_touch_move(
+                            x, y)
+
+                elif event.type == \
+                        pygame.MOUSEBUTTONDOWN:
+                    self._last_touch = time.time()
+                    x, y = event.pos
+                    touch_down_pos = (x, y)
+                    if self._clock_active:
+                        pass
+                    elif self._is_huge():
+                        current.handle_touch_down(
+                            x, y)
+                    else:
+                        nav_r = \
+                            self.nav.handle_touch(
+                                x, y)
+                        if nav_r == -1:
+                            current.handle_touch_down(
+                                x, y)
+                        else:
+                            self._nav_go(nav_r)
+
+                elif event.type == \
+                        pygame.MOUSEBUTTONUP:
+                    self._last_touch = time.time()
+                    x, y = event.pos
+                    if self._clock_active:
+                        self._wake_from_clock()
+                    else:
+                        result = \
+                            current.handle_touch_up(
+                                x, y)
+                        self._handle_nav_result(
+                            result)
+                    touch_down_pos = None
+
+                elif event.type == \
+                        pygame.MOUSEMOTION:
+                    if touch_down_pos and \
+                            not self._clock_active:
+                        current.handle_touch_move(
+                            *event.pos)
+
+            current.update()
+            self.screens[SCREEN_SETTINGS].update()
+            current.draw()
+            if not self._clock_active and \
+               not self._is_huge():
+                self.nav.draw(self.screen)
+            pygame.display.flip()
+
+            if time.time() - self._last_save >= 10:
+                self._last_save = time.time()
+                self._save_position()
+
+            self._check_end_of_book()
+            self._check_idle()
+            self.clock.tick(FPS)
+
+
+if __name__ == "__main__":
+    app = App()
+    app.run()
