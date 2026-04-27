@@ -1,6 +1,7 @@
 import pygame
 import time
 import os
+import mpd as mpd_lib
 from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
@@ -199,7 +200,6 @@ class HugeScreen(BaseScreen):
         idx   = max(0, min(idx, total - 1))
         self._current_chapter_idx = idx
         try:
-            import mpd as mpd_lib
             c = mpd_lib.MPDClient()
             c.connect("localhost", 6600)
             c.timeout = 3

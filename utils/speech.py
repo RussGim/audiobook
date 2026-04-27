@@ -13,7 +13,6 @@ def set_mpd(mpd_client):
 def beep(freq=800, ms=40):
     try:
         import numpy as np
-        # Scale beep volume to MPD volume
         vol_scale = (_mpd_ref.volume / 100) \
                     if _mpd_ref else 0.3
         vol_scale = max(0.05, vol_scale * 0.4)
@@ -33,7 +32,7 @@ def beep(freq=800, ms=40):
         print(f"Beep error: {e}")
 
 def _do_speak(text):
-    """Internal — actually run espeak and aplay"""
+    """Internal — run espeak and aplay"""
     try:
         subprocess.run(
             ["amixer", "sset", "Master",
@@ -46,7 +45,7 @@ def _do_speak(text):
              "-v", "mb-en1",
              "-s", "130",
              "-p", "50",
-             "-g", "0",
+             "-g", "5",
              "-a", "180",
              "--stdout", text],
             stdout=subprocess.PIPE,
@@ -69,10 +68,8 @@ def _do_speak(text):
 
 def speak_and_wait(text, stop_mpd=True):
     """
-    Stop MPD, speak, return.
-    Caller is responsible for resuming/starting
-    playback after this returns.
-    stop_mpd: if True pause MPD before speaking
+    Pause MPD if needed, speak, return.
+    Caller responsible for resuming playback.
     """
     mpd = _mpd_ref
     if stop_mpd and mpd and \
