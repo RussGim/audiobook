@@ -1,5 +1,6 @@
 import pygame
 import os
+import time
 from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
@@ -9,9 +10,11 @@ class BooksScreen(BaseScreen):
         super().__init__(app)
         self.list = widgets.ScrollList(
             20, 90, 1240, 530)
-        self._books        = []
-        self._touch_start  = None
-        self._pending_idx  = -1
+        self._books             = []
+        self._touch_start       = None
+        self._pending_idx       = -1
+        self._last_usb_mounted  = False
+        self._last_refresh_tick = 0
 
     def on_enter(self):
         self._refresh()
@@ -31,22 +34,51 @@ class BooksScreen(BaseScreen):
         self.list.set_items(display)
         self._pending_idx = -1
 
+    def _check_usb(self):
+        """Check USB state, refresh only on change"""
+        mounted = os.path.ismount(
+            "/home/pi/music/usb0")
+        if mounted != self._last_usb_mounted:
+            self._last_usb_mounted = mounted
+            self._refresh()
+
     def _open_book(self, idx):
         from utils.speech import beep, speak_and_wait
-        beep()
+        from utils.state import save
+
+        if not (0 <= idx < len(self._books)):
+            return None
+
         book = self._books[idx]
         self.list.set_selected(idx)
         name = os.path.basename(book)
-        # Stop MPD, speak, then play
-        speak_and_wait(f"Playing {name}")
-        self.app.mpd.play_book(book)
+
+        beep()
+        speak_and_wait(f"Playing {name}",
+                       stop_mpd=False)
+
+        ok = self.app.mpd.play_book(book)
+        if not ok:
+            speak_and_wait("Could not play",
+                           stop_mpd=False)
+            self._refresh()
+            self._pending_idx = -1
+            return None
+
         self.app.state["book"]     = book
         self.app.state["chapter"]  = None
         self.app.state["position"] = 0.0
-        from utils.state import save
         save(self.app.state)
+
         self._pending_idx = -1
         return "go_player"
+
+    def update(self):
+        """Poll USB state every 2 seconds"""
+        now = pygame.time.get_ticks()
+        if now - self._last_refresh_tick > 2000:
+            self._last_refresh_tick = now
+            self._check_usb()
 
     def draw(self):
         self.screen.fill(BLACK)
@@ -93,8 +125,8 @@ class BooksScreen(BaseScreen):
                 if idx == self._pending_idx:
                     return self._open_book(idx)
                 else:
-                    from utils.speech import (beep,
-                        speak_and_wait)
+                    from utils.speech import (
+                        beep, speak_and_wait)
                     beep()
                     self._pending_idx = idx
                     self.list.set_selected(idx)
@@ -107,7 +139,7 @@ class BooksScreen(BaseScreen):
                         f"{name}, "
                         f"{chapters} chapters, "
                         f"press again to play",
-                        stop_mpd=True)
+                        stop_mpd=False)
 
         return None
 

@@ -38,7 +38,7 @@ from screens.huge     import HugeScreen
 class App:
     def __init__(self):
         pygame.init()
-        pygame.mouse.set_visible(True)
+        pygame.mouse.set_visible(False)
         flags = pygame.FULLSCREEN if FULLSCREEN else 0
         self.screen = pygame.display.set_mode(
             (SCREEN_W, SCREEN_H), flags)
@@ -71,7 +71,6 @@ class App:
         self._last_eof         = False
         self._last_save        = time.time()
 
-        # Start on player or books
         use_large = self.state.get(
             "large_screen", False)
         if self.state.get("book"):
@@ -82,8 +81,6 @@ class App:
         else:
             self._go_to(SCREEN_BOOKS)
 
-        # USB manager — after _go_to so
-        # _current_screen is set
         self.usb = USBManager(self.mpd)
         self.usb.set_callback(self._on_usb_change)
         self.usb.scan_once()
@@ -100,7 +97,6 @@ class App:
                 speak(f"Resuming "
                       f"{os.path.basename(book)}")
             else:
-                # Saved path no longer valid
                 self.state["book"]     = None
                 self.state["chapter"]  = None
                 self.state["position"] = 0.0
@@ -194,8 +190,8 @@ class App:
             self._last_eof = False
 
     def _check_idle(self):
-        idle          = time.time() - self._last_touch
-        radio         = self.screens.get(SCREEN_RADIO)
+        idle = time.time() - self._last_touch
+        radio = self.screens.get(SCREEN_RADIO)
         radio_playing = (radio and
                          radio._selected >= 0)
         audio_playing = self.mpd.state == "play"
@@ -225,7 +221,6 @@ class App:
         return self._current_screen == SCREEN_HUGE
 
     def run(self):
-        touch_down_pos = None
         while True:
             current = self.screens[
                 self._current_screen]
@@ -292,7 +287,6 @@ class App:
                     self._last_touch = time.time()
                     x = int(event.x * SCREEN_W)
                     y = int(event.y * SCREEN_H)
-                    touch_down_pos = (x, y)
                     if self._clock_active:
                         pass
                     elif self._is_huge():
@@ -320,7 +314,6 @@ class App:
                                 x, y)
                         self._handle_nav_result(
                             result)
-                    touch_down_pos = None
 
                 elif event.type == \
                         pygame.FINGERMOTION:
@@ -329,47 +322,6 @@ class App:
                         y = int(event.y * SCREEN_H)
                         current.handle_touch_move(
                             x, y)
-
-                elif event.type == \
-                        pygame.MOUSEBUTTONDOWN:
-                    self._last_touch = time.time()
-                    x, y = event.pos
-                    touch_down_pos = (x, y)
-                    if self._clock_active:
-                        pass
-                    elif self._is_huge():
-                        current.handle_touch_down(
-                            x, y)
-                    else:
-                        nav_r = \
-                            self.nav.handle_touch(
-                                x, y)
-                        if nav_r == -1:
-                            current.handle_touch_down(
-                                x, y)
-                        else:
-                            self._nav_go(nav_r)
-
-                elif event.type == \
-                        pygame.MOUSEBUTTONUP:
-                    self._last_touch = time.time()
-                    x, y = event.pos
-                    if self._clock_active:
-                        self._wake_from_clock()
-                    else:
-                        result = \
-                            current.handle_touch_up(
-                                x, y)
-                        self._handle_nav_result(
-                            result)
-                    touch_down_pos = None
-
-                elif event.type == \
-                        pygame.MOUSEMOTION:
-                    if touch_down_pos and \
-                            not self._clock_active:
-                        current.handle_touch_move(
-                            *event.pos)
 
             current.update()
             self.screens[SCREEN_SETTINGS].update()

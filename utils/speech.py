@@ -32,39 +32,35 @@ def beep(freq=800, ms=40):
         print(f"Beep error: {e}")
 
 def _do_speak(text):
-    """Internal — run espeak and aplay"""
+    """Speak using espeak-ng, scaled from current MPD volume."""
     try:
-        subprocess.run(
-            ["amixer", "sset", "Master",
-             f"{_mpd_ref.volume if _mpd_ref else 80}%"],
-            capture_output=True)
-    except: pass
-    try:
-        espeak = subprocess.Popen(
-            ["espeak-ng",
-             "-v", "mb-en1",
-             "-s", "130",
-             "-p", "50",
-             "-g", "5",
-             "-a", "180",
-             "--stdout", text],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL)
-        aplay = subprocess.Popen(
-            ["aplay", "-D", "hw:Headphones,0"],
-            stdin=espeak.stdout,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
-        espeak.stdout.close()
-        aplay.wait()
-        espeak.wait()
+        import shlex
+        import re
+
+        vol = 70
+
+        # Prefer live MPD volume
+        try:
+            out = subprocess.check_output(
+                ["mpc", "status"],
+                text=True,
+                stderr=subprocess.DEVNULL
+            )
+            m = re.search(r"volume:\s*(\d+)%", out)
+            if m:
+                vol = int(m.group(1))
+        except Exception:
+            pass
+
+        # espeak amplitude is 0-200
+        amp = int(max(10, min(100, vol)) * 1.5)
+        amp = max(15, min(180, amp))
+
+        cmd = f'espeak-ng -a {amp} {shlex.quote(text)}'
+        subprocess.run(cmd, shell=True)
+
     except Exception as e:
         print(f"Speech error: {e}")
-    try:
-        subprocess.run(
-            ["amixer", "sset", "Master", "100%"],
-            capture_output=True)
-    except: pass
 
 def speak_and_wait(text, stop_mpd=True):
     """
