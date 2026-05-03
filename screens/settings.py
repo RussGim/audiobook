@@ -5,15 +5,17 @@ from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
 from utils.state import save as save_state
-from constants import SCREEN_RADIO
+from constants import SCREEN_RADIO, SCREEN_PLAYER, SCREEN_PLAYER_HUGE
 
 SPEEDS        = [0.75, 1.0, 1.25, 1.5, 2.0]
 SLEEP_OPTIONS = [0, 15, 30, 45, 60]
 
-# Total virtual height of settings content
-CONTENT_TOP  = 80   # below header
-SECTION_H    = 130  # height per section
-NAV_Y        = 640  # nav bar top
+BACKLIGHT     = "/sys/class/backlight/10-0045/brightness"
+BACKLIGHT_MAX = 31
+
+CONTENT_TOP  = 80
+SECTION_H    = 130
+NAV_Y        = 640
 VISIBLE_H    = NAV_Y - CONTENT_TOP
 
 class SettingsScreen(BaseScreen):
@@ -37,25 +39,6 @@ class SettingsScreen(BaseScreen):
         self._build_sections()
 
     def _build_sections(self):
-        """
-        Define sections with their y positions
-        in virtual space (below CONTENT_TOP).
-        Each section is SECTION_H tall.
-        """
-        # Section y values in virtual coords
-        # (0 = top of scrollable area)
-        self._sections = {
-            "bluetooth": 0,
-            "speed":     130,
-            "sleep":     260,
-            "brightness":390,
-            "clock":     520,
-            "player":    650,
-            "confirm":   780,
-        }
-        self._total_h = 780 + SECTION_H
-
-        # Build all button rects in virtual coords
         bw = 175
         self.btn_bt     = pygame.Rect(
             40, 30, 500, 75)
@@ -99,7 +82,6 @@ class SettingsScreen(BaseScreen):
             target=_check, daemon=True).start()
 
     def _vy(self, virtual_y):
-        """Convert virtual y to screen y"""
         return CONTENT_TOP + virtual_y - self._scroll
 
     def _line(self, vy):
@@ -118,7 +100,6 @@ class SettingsScreen(BaseScreen):
                 align="left")
 
     def _btn_rect(self, rect):
-        """Convert virtual rect to screen rect"""
         return pygame.Rect(
             rect.x,
             self._vy(rect.y),
@@ -138,16 +119,13 @@ class SettingsScreen(BaseScreen):
             text_col, sr.centerx, sr.centery)
 
     def draw(self):
-        
         self.screen.fill(DARK_BLUE)
 
-        # Clip to content area
         clip = pygame.Rect(
             0, CONTENT_TOP,
             1280, VISIBLE_H)
         self.screen.set_clip(clip)
 
-        # Bluetooth section
         self._line(0)
         self._label("Bluetooth", 15)
         sr = self._btn_rect(self.btn_bt)
@@ -171,7 +149,6 @@ class SettingsScreen(BaseScreen):
                 "normal", WHITE,
                 sr2.centerx, sr2.centery)
 
-        # Speed section
         self._line(130)
         self._label("Playback Speed", 145)
         for i, (r, spd) in enumerate(
@@ -182,7 +159,6 @@ class SettingsScreen(BaseScreen):
                 else DARK_GREY,
                 f"{spd}x")
 
-        # Sleep section
         self._line(260)
         self._label("Sleep Timer", 275)
         if self._sleep_end:
@@ -209,7 +185,6 @@ class SettingsScreen(BaseScreen):
                 BLUE if active else DARK_GREY,
                 "Off" if opt == 0 else f"{opt}m")
 
-        # Brightness section
         self._line(390)
         sy = self._vy(405)
         if CONTENT_TOP <= sy <= NAV_Y:
@@ -233,7 +208,6 @@ class SettingsScreen(BaseScreen):
             self.bright_plus, DARK_GREY,
             "+", YELLOW, "large")
 
-        # Clock section
         self._line(520)
         self._label("Clock Format", 535)
         use_12h = self.app.state.get(
@@ -247,7 +221,6 @@ class SettingsScreen(BaseScreen):
             BLUE if not use_12h else DARK_GREY,
             "24hr")
 
-        # Player section
         self._line(650)
         self._label("Player Size", 665)
         use_large = self.app.state.get(
@@ -261,7 +234,6 @@ class SettingsScreen(BaseScreen):
             BLUE if use_large else DARK_GREY,
             "Large")
 
-        # Confirm tap section
         self._line(780)
         self._label("Confirm Tap", 795)
         confirm = self.app.state.get(
@@ -277,7 +249,6 @@ class SettingsScreen(BaseScreen):
 
         self.screen.set_clip(None)
 
-        # Header
         widgets.draw_text(
             self.screen, "Settings",
             "large", WHITE, 640, 38)
@@ -286,8 +257,7 @@ class SettingsScreen(BaseScreen):
             (20, CONTENT_TOP - 5),
             (1240, CONTENT_TOP - 5), 1)
 
-        # Scrollbar
-        total = self._total_h
+        total = 780 + SECTION_H
         if total > VISIBLE_H:
             bar_h = max(40, int(
                 VISIBLE_H * VISIBLE_H / total))
@@ -399,9 +369,10 @@ class SettingsScreen(BaseScreen):
 
     def _set_speed(self, idx):
         self._speed_idx         = idx
-        self.app.state["speed"] = SPEEDS[idx]
+        speed = SPEEDS[idx]
+        self.app.state["speed"] = speed
         self.app.speech.speak(
-            f"Speed {SPEEDS[idx]} times")
+            f"Speed {speed} times")
         save_state(self.app.state)
 
     def _set_brightness(self, val):
@@ -409,17 +380,16 @@ class SettingsScreen(BaseScreen):
         self.app.state["brightness"] = \
             self._brightness
         try:
-            bl = int(self._brightness * 255 / 100)
-            with open(
-                "/sys/class/backlight/"
-                "rpi_backlight/brightness", "w"
-            ) as f:
+            bl = int(
+                self._brightness * BACKLIGHT_MAX
+                / 100)
+            with open(BACKLIGHT, "w") as f:
                 f.write(str(bl))
-        except: pass
+        except Exception as e:
+            print(f"Brightness error: {e}")
         save_state(self.app.state)
 
     def _hit(self, rect, x, y):
-        """Check if screen x,y hits virtual rect"""
         sr = self._btn_rect(rect)
         return (sr.collidepoint(x, y) and
                 CONTENT_TOP <= y <= NAV_Y)
@@ -436,7 +406,7 @@ class SettingsScreen(BaseScreen):
         if self._drag_start is not None:
             delta = self._drag_start - y
             max_s = max(0,
-                self._total_h - VISIBLE_H)
+                (780 + SECTION_H) - VISIBLE_H)
             self._scroll = max(
                 0, min(self._drag_scroll + delta,
                        max_s))
@@ -446,7 +416,6 @@ class SettingsScreen(BaseScreen):
         if direction and not self._bt_panel:
             return direction
 
-        # Only register as tap if minimal scroll
         if self._touch_start:
             _, sy = self._touch_start
             if abs(y - sy) > 15:
@@ -555,12 +524,14 @@ class SettingsScreen(BaseScreen):
             self.app.state["large_screen"] = False
             self.app.speech.speak("Normal screen")
             save_state(self.app.state)
+            self.app._go_to(SCREEN_PLAYER)
             return None
 
         if self._hit(self.btn_large, x, y):
             self.app.state["large_screen"] = True
             self.app.speech.speak("Large screen")
             save_state(self.app.state)
+            self.app._go_to(SCREEN_PLAYER_HUGE)
             return None
 
         if self._hit(self.btn_confirm_on, x, y):

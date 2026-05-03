@@ -4,7 +4,7 @@ import time
 from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
-from constants import SCREEN_PLAYER_HUGE
+from constants import SCREEN_HUGE
 
 class PlayerScreen(BaseScreen):
     def __init__(self, app):
@@ -16,7 +16,7 @@ class PlayerScreen(BaseScreen):
         self._last_long    = 0
         self._dragging_vol = False
 
-        cy = 420
+        cy = 370
         self.btn_prev = pygame.Rect(60,  cy-100, 280, 200)
         self.btn_play = pygame.Rect(500, cy-110, 280, 220)
         self.btn_next = pygame.Rect(940, cy-100, 280, 200)
@@ -177,7 +177,10 @@ class PlayerScreen(BaseScreen):
 
         self._draw_volume_slider()
 
-        
+        widgets.draw_text(
+            self.screen,
+            "swipe up for large screen",
+            "tiny", (40, 40, 40), 640, 635)
 
         if not mpd.connected:
             widgets.draw_text(
@@ -237,7 +240,15 @@ class PlayerScreen(BaseScreen):
         btn = self._pressed
         self._pressed = None
 
-        
+        if self._touch_down_pos:
+            dx = x - self._touch_down_pos[0]
+            dy = y - self._touch_down_pos[1]
+            if (dy < -80 and
+                    abs(dy) > abs(dx) * 1.5):
+                from utils.speech import speak_and_wait
+                speak_and_wait("Large screen")
+                self._long_fired = False
+                return SCREEN_HUGE
 
         if direction in ("swipe_left",
                          "swipe_right"):

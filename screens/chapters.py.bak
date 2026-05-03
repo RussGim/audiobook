@@ -29,11 +29,6 @@ class ChaptersScreen(BaseScreen):
                 self.list.set_selected(i)
                 break
 
-    def _redraw_now(self):
-        self.draw()
-        self.app.nav.draw(self.screen)
-        pygame.display.flip()
-
     def draw(self):
         self.screen.fill(BLACK)
         book = os.path.basename(self._book) \
@@ -66,15 +61,12 @@ class ChaptersScreen(BaseScreen):
             if 0 <= idx < len(self._chapters):
                 chapter = self._chapters[idx]
                 self.list.set_selected(idx)
-                self._redraw_now()
-                self.app.mpd.pause()
                 name = chapter.rsplit(".", 1)[0]
                 from utils.speech import \
-                    beep, speak_and_wait
-                beep()
+                    speak_and_wait
                 speak_and_wait(
                     f"Playing {name}",
-                    stop_mpd=False)
+                    stop_mpd=True)
                 self.app.mpd.play_chapter(
                     self._book, chapter)
                 return "go_player"

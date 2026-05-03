@@ -4,7 +4,6 @@ import math
 from screens.base import BaseScreen
 from ui.colours import *
 
-# Cache fonts so we don't rebuild every frame
 _time_font_cache  = {}
 _date_font_cache  = {}
 
@@ -33,11 +32,13 @@ class ClockScreen(BaseScreen):
         self._date_font_sz  = None
         self._hint_font     = None
         self._layout_cached = False
+        self._last_drawn    = None
 
     def on_enter(self):
         self._set_brightness(20)
         self._drift()
         self._layout_cached = False
+        self._last_drawn    = None
 
     def on_exit(self):
         self._set_brightness(
@@ -45,10 +46,10 @@ class ClockScreen(BaseScreen):
 
     def _set_brightness(self, val):
         try:
-            bl = int(val * 255 / 100)
+            bl = int(val * 31 / 100)
             with open(
                 "/sys/class/backlight/"
-                "rpi_backlight/brightness", "w"
+                "10-0045/brightness", "w"
             ) as f:
                 f.write(str(bl))
         except:
@@ -64,10 +65,8 @@ class ClockScreen(BaseScreen):
         self._last_drift = t
 
     def _calc_layout(self, timestr, datestr):
-        """Calculate font sizes once and cache"""
         W, H, pad = 1280, 720, 5
 
-        # Find largest time font
         time_sz = 10
         for size in range(10, 600, 2):
             f = _get_time_font(size)
@@ -75,7 +74,6 @@ class ClockScreen(BaseScreen):
                 break
             time_sz = size
 
-        # Find largest date font
         date_sz = 10
         for size in range(10, 400, 2):
             f = _get_date_font(size)
@@ -83,7 +81,6 @@ class ClockScreen(BaseScreen):
                 break
             date_sz = size
 
-        # Scale down until total fits
         gap = 20
         while True:
             ft = _get_time_font(time_sz)
@@ -102,16 +99,17 @@ class ClockScreen(BaseScreen):
         self._layout_cached = True
 
     def draw(self):
-        self.screen.fill(BLACK)
-
-        if time.time() - self._last_drift > 30:
-            self._drift()
-
         now = time.localtime()
         W, H, pad = 1280, 720, 5
 
-        timestr = (f"{now.tm_hour:02d}:"
-                   f"{now.tm_min:02d}")
+        use_12h = self.app.state.get(
+            "clock_12h", False)
+        if use_12h:
+            hour = now.tm_hour % 12 or 12
+            timestr = f"{hour}:{now.tm_min:02d}"
+        else:
+            timestr = (f"{now.tm_hour:02d}:"
+                       f"{now.tm_min:02d}")
 
         days   = ["Monday", "Tuesday", "Wednesday",
                   "Thursday", "Friday",
@@ -123,6 +121,16 @@ class ClockScreen(BaseScreen):
         datestr = (f"{days[now.tm_wday]}  "
                    f"{now.tm_mday} "
                    f"{months[now.tm_mon - 1]}")
+
+        # Only redraw when minute changes
+        cache_key = f"{timestr}|{datestr}"
+        if cache_key == self._last_drawn:
+            return
+        self._last_drawn = cache_key
+
+        # Drift every 30 seconds
+        if time.time() - self._last_drift > 30:
+            self._drift()
 
         if not self._layout_cached:
             self._calc_layout(timestr, datestr)
@@ -138,14 +146,14 @@ class ClockScreen(BaseScreen):
         start_y = ((H - total_h) // 2 +
                    self._offset_y)
 
-        # Time
+        self.screen.fill(BLACK)
+
         ts = ft.render(timestr, True,
                        (210, 210, 210))
         tr = ts.get_rect(
             center=(cx, start_y + th // 2))
         self.screen.blit(ts, tr)
 
-        # Date
         ds = fd.render(datestr, True,
                        (160, 160, 160))
         dr = ds.get_rect(
@@ -153,7 +161,6 @@ class ClockScreen(BaseScreen):
                     start_y + th + gap + dh // 2))
         self.screen.blit(ds, dr)
 
-        # Tap hint — cached
         if not self._hint_font:
             self._hint_font = \
                 pygame.font.SysFont(
@@ -162,6 +169,8 @@ class ClockScreen(BaseScreen):
             "tap to wake", True, (50, 50, 50))
         hr = hs.get_rect(center=(W // 2, H - 20))
         self.screen.blit(hs, hr)
+
+        pygame.display.flip()
 
     def handle_touch_up(self, x, y):
         return "wake"

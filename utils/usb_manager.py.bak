@@ -25,9 +25,12 @@ class USBManager:
         self._on_change = fn
 
     def _get_media_paths(self):
+        """Dynamically find all /media/usbX paths"""
         paths = []
+        # Check /media/usbX
         for path in sorted(glob.glob("/media/usb*")):
             paths.append(path)
+        # Check /media/pi/X
         pi_media = "/media/pi"
         if os.path.isdir(pi_media):
             try:
@@ -39,17 +42,12 @@ class USBManager:
         return paths
 
     def _find_audio_mount(self):
-        # Check standard media paths first
+        """Find mounted path containing audio"""
         for path in self._get_media_paths():
             if not os.path.isdir(path): continue
             if not os.path.ismount(path): continue
             if self._has_audio(path):
                 return path
-        # Fallback — direct mount used by
-        # audiobook-usb-watch.sh
-        if os.path.ismount(MPD_USB_PATH) and \
-           self._has_audio(MPD_USB_PATH):
-            return MPD_USB_PATH
         return None
 
     def _has_audio(self, path, depth=0):
@@ -79,14 +77,12 @@ class USBManager:
         return None
 
     def _link_to_mpd(self, mount_path):
-        # If already mounted directly at
-        # MPD_USB_PATH no symlink needed
-        if mount_path == MPD_USB_PATH:
-            return True
         try:
             current = self._current_symlink_target()
             if current == mount_path:
                 return True
+
+            # Remove whatever is there
             if os.path.islink(MPD_USB_PATH):
                 os.unlink(MPD_USB_PATH)
             elif os.path.ismount(MPD_USB_PATH):
@@ -97,6 +93,7 @@ class USBManager:
             elif os.path.isdir(MPD_USB_PATH):
                 try: os.rmdir(MPD_USB_PATH)
                 except: pass
+
             os.symlink(mount_path, MPD_USB_PATH)
             print(f"Linked {mount_path} -> "
                   f"{MPD_USB_PATH}")
@@ -173,7 +170,6 @@ class USBManager:
                     mount = self._find_audio_mount()
                     symlink_wrong = (
                         mount and
-                        mount != MPD_USB_PATH and
                         self._current_symlink_target()
                         != mount)
 
@@ -200,6 +196,8 @@ class USBManager:
                             drives = []
                         with self._lock:
                             self.drives = drives
+                        # Only callback on actual
+                        # mount change not relinks
                         if mount != prev_mount:
                             if self._on_change:
                                 self._on_change(

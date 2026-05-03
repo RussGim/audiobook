@@ -16,7 +16,7 @@ class MPDClient:
         self.track_total  = 0
         self.current_file = ""
         self.title        = "---"
-        self.book         = "---"
+        self.book         = ""
         self._connect()
         self._start_poll()
 
@@ -149,6 +149,11 @@ class MPDClient:
     def set_volume(self, vol):
         vol = max(0, min(100, vol))
         self._cmd(self.client.setvol, vol)
+
+    def set_speed(self, speed):
+        # TODO: python-mpd2 doesn't expose the
+        # MPD speed command — pending a solution
+        pass
 
     def get_books(self):
         try:

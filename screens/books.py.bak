@@ -1,7 +1,6 @@
 import pygame
 import os
 import time
-import subprocess
 from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
@@ -16,7 +15,6 @@ class BooksScreen(BaseScreen):
         self._pending_idx       = -1
         self._last_usb_mounted  = False
         self._last_refresh_tick = 0
-        self._usb_loading       = False
 
     def on_enter(self):
         self._refresh()
@@ -27,12 +25,6 @@ class BooksScreen(BaseScreen):
                 self._books.index(cur))
 
     def _refresh(self):
-        if not os.path.ismount(
-                "/home/pi/music/usb0"):
-            self._books = []
-            self.list.set_items([])
-            self._pending_idx = -1
-            return
         self._books = self.app.mpd.get_books()
         display = []
         for b in self._books:
@@ -42,32 +34,13 @@ class BooksScreen(BaseScreen):
         self.list.set_items(display)
         self._pending_idx = -1
 
-    def _is_mpd_updating(self):
-        try:
-            r = subprocess.run(
-                ["mpc", "status"],
-                capture_output=True, text=True,
-                timeout=2)
-            return "Updating DB" in r.stdout
-        except:
-            return False
-
     def _check_usb(self):
+        """Check USB state, refresh only on change"""
         mounted = os.path.ismount(
             "/home/pi/music/usb0")
         if mounted != self._last_usb_mounted:
             self._last_usb_mounted = mounted
-            if mounted:
-                self._usb_loading = True
-                self.app.mpd.update_library()
-            else:
-                self._usb_loading = False
-                self._refresh()
-
-    def _redraw_now(self):
-        self.draw()
-        self.app.nav.draw(self.screen)
-        pygame.display.flip()
+            self._refresh()
 
     def _open_book(self, idx):
         from utils.speech import beep, speak_and_wait
@@ -78,10 +51,8 @@ class BooksScreen(BaseScreen):
 
         book = self._books[idx]
         self.list.set_selected(idx)
-        self._redraw_now()
-        self.app.mpd.pause()
-
         name = os.path.basename(book)
+
         beep()
         speak_and_wait(f"Playing {name}",
                        stop_mpd=False)
@@ -103,15 +74,11 @@ class BooksScreen(BaseScreen):
         return "go_player"
 
     def update(self):
+        """Poll USB state every 2 seconds"""
         now = pygame.time.get_ticks()
         if now - self._last_refresh_tick > 2000:
             self._last_refresh_tick = now
-            if self._usb_loading:
-                if not self._is_mpd_updating():
-                    self._usb_loading = False
-                    self._refresh()
-            else:
-                self._check_usb()
+            self._check_usb()
 
     def draw(self):
         self.screen.fill(BLACK)
@@ -119,21 +86,6 @@ class BooksScreen(BaseScreen):
                           "large", YELLOW, 640, 28)
         pygame.draw.line(self.screen, WHITE,
                          (20, 75), (1260, 75), 1)
-
-        if self._usb_loading:
-            dots = "." * (
-                int(pygame.time.get_ticks()
-                    / 400) % 4)
-            widgets.draw_text(
-                self.screen,
-                f"Reading audio files{dots}",
-                "large", ORANGE, 640, 300)
-            widgets.draw_text(
-                self.screen,
-                "Please wait",
-                "medium", GREY, 640, 380)
-            return
-
         self.list.draw(self.screen)
 
         if not self._books:
@@ -158,9 +110,6 @@ class BooksScreen(BaseScreen):
         direction = super().handle_touch_up(x, y)
         if direction: return direction
 
-        if self._usb_loading:
-            return None
-
         if self._touch_start:
             sx, sy = self._touch_start
             idx = self.list.handle_touch_up(
@@ -178,11 +127,9 @@ class BooksScreen(BaseScreen):
                 else:
                     from utils.speech import (
                         beep, speak_and_wait)
+                    beep()
                     self._pending_idx = idx
                     self.list.set_selected(idx)
-                    self._redraw_now()
-                    self.app.mpd.pause()
-                    beep()
                     name = os.path.basename(
                         self._books[idx])
                     chapters = len(
