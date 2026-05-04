@@ -18,24 +18,27 @@ from constants        import (SCREEN_BOOKS,
                                SCREEN_SETTINGS,
                                SCREEN_CLOCK,
                                SCREEN_RADIO,
-                               SCREEN_PLAYER_HUGE,
+                               SCREEN_PLAYER_LARGE,
+                               SCREEN_PLAYER_LARGEST,
                                SCREEN_BOOKS_HUGE)
 from ui               import widgets
 from mpd_client       import MPDClient
 from bluetooth        import BluetoothManager
 from utils            import speech as speech_module
-from utils.speech     import speak, set_mpd
+from utils.speech     import speak, set_mpd, \
+                               set_voice_prompts
 from utils.state      import (load as load_state,
                                save as save_state)
 from utils.usb_manager import USBManager
-from screens.books       import BooksScreen
-from screens.player      import PlayerScreen
-from screens.chapters    import ChaptersScreen
-from screens.settings    import SettingsScreen
-from screens.clock       import ClockScreen
-from screens.radio       import RadioScreen
-from screens.player_huge import PlayerHugeScreen
-from screens.books_huge  import BooksHugeScreen
+from screens.books         import BooksScreen
+from screens.player        import PlayerScreen
+from screens.player_large  import PlayerLargeScreen
+from screens.player_largest import PlayerLargestScreen
+from screens.chapters      import ChaptersScreen
+from screens.settings      import SettingsScreen
+from screens.clock         import ClockScreen
+from screens.radio         import RadioScreen
+from screens.books_huge    import BooksHugeScreen
 
 class App:
     def __init__(self):
@@ -54,37 +57,38 @@ class App:
         self.bluetooth = BluetoothManager()
         self.speech    = speech_module
         self.state     = load_state()
+        set_voice_prompts(
+            self.state.get("voice_prompts", True))
         self.nav       = NavBar(SCREEN_W, SCREEN_H)
 
         self.screens = {
-            SCREEN_BOOKS:       BooksScreen(self),
-            SCREEN_PLAYER:      PlayerScreen(self),
-            SCREEN_CHAPTERS:    ChaptersScreen(self),
-            SCREEN_SETTINGS:    SettingsScreen(self),
-            SCREEN_CLOCK:       ClockScreen(self),
-            SCREEN_RADIO:       RadioScreen(self),
-            SCREEN_PLAYER_HUGE: PlayerHugeScreen(self),
-            SCREEN_BOOKS_HUGE:  BooksHugeScreen(self),
+            SCREEN_BOOKS:          BooksScreen(self),
+            SCREEN_PLAYER:         PlayerScreen(self),
+            SCREEN_PLAYER_LARGE:   PlayerLargeScreen(self),
+            SCREEN_PLAYER_LARGEST: PlayerLargestScreen(self),
+            SCREEN_CHAPTERS:       ChaptersScreen(self),
+            SCREEN_SETTINGS:       SettingsScreen(self),
+            SCREEN_CLOCK:          ClockScreen(self),
+            SCREEN_RADIO:          RadioScreen(self),
+            SCREEN_BOOKS_HUGE:     BooksHugeScreen(self),
         }
 
-        self._idle_timeout     = 60
-        self._last_touch       = time.time()
-        self._clock_active     = False
-        self._pre_clock_screen = SCREEN_PLAYER
-        self._last_eof         = False
-        self._last_save        = time.time()
+        self._idle_timeout              = 60
+        self._last_touch                = time.time()
+        self._clock_active              = False
+        self._pre_clock_screen          = SCREEN_PLAYER
+        self._last_eof                  = False
+        self._last_save                 = time.time()
+        self._last_track_num            = 0
+        self._suppress_chapter_announce = False
 
         self._fswipe_x            = 0
         self._fswipe_y            = 0
         self._fswipe_t            = 0
         self._pre_settings_screen = None
 
-        use_large = self.state.get(
-            "large_screen", False)
         if self.state.get("book"):
-            self._go_to(
-                SCREEN_PLAYER_HUGE if use_large
-                else SCREEN_PLAYER)
+            self._go_to(self._player_screen())
             self._resume_last()
         else:
             self._go_to(SCREEN_BOOKS)
@@ -93,6 +97,14 @@ class App:
         self.usb.set_callback(self._on_usb_change)
         self.usb.scan_once()
         self.usb.start_monitor()
+
+    def _player_screen(self):
+        return {
+            "normal":  SCREEN_PLAYER,
+            "large":   SCREEN_PLAYER_LARGE,
+            "largest": SCREEN_PLAYER_LARGEST,
+        }.get(self.state.get(
+            "player_size", "normal"), SCREEN_PLAYER)
 
     def _resume_last(self):
         book     = self.state.get("book")
@@ -118,17 +130,19 @@ class App:
         self._current_screen = screen_idx
         if screen_idx not in (
                 SCREEN_CLOCK, SCREEN_RADIO,
-                SCREEN_PLAYER_HUGE,
+                SCREEN_PLAYER_LARGE,
+                SCREEN_PLAYER_LARGEST,
                 SCREEN_BOOKS_HUGE):
             self.nav.current = screen_idx
-        elif screen_idx == SCREEN_PLAYER_HUGE:
+        elif screen_idx in (
+                SCREEN_PLAYER_LARGE,
+                SCREEN_PLAYER_LARGEST):
             self.nav.current = SCREEN_PLAYER
         self.screens[screen_idx].on_enter()
 
     def _nav_go(self, nav_r):
-        if nav_r == SCREEN_PLAYER and \
-           self.state.get("large_screen", False):
-            self._go_to(SCREEN_PLAYER_HUGE)
+        if nav_r == SCREEN_PLAYER:
+            self._go_to(self._player_screen())
         else:
             self._go_to(nav_r)
 
@@ -138,13 +152,7 @@ class App:
         if isinstance(result, int):
             self._go_to(result)
         elif result == "go_player":
-            use_large = self.state.get(
-                "large_screen", False)
-            self._go_to(
-                SCREEN_PLAYER_HUGE if use_large
-                else SCREEN_PLAYER)
-        elif result == "go_huge":
-            self._go_to(SCREEN_PLAYER_HUGE)
+            self._go_to(self._player_screen())
         elif result == "go_normal_player":
             self._go_to(SCREEN_PLAYER)
         elif result == "swipe_left":
@@ -180,7 +188,8 @@ class App:
         self.screens[SCREEN_BOOKS]._refresh()
         if (self._current_screen in (
                 SCREEN_PLAYER,
-                SCREEN_PLAYER_HUGE)
+                SCREEN_PLAYER_LARGE,
+                SCREEN_PLAYER_LARGEST)
                 and self.mpd.state == "stop"):
             self._go_to(SCREEN_BOOKS)
 
@@ -210,6 +219,18 @@ class App:
         elif not is_stopped:
             self._last_eof = False
 
+    def _check_chapter_change(self):
+        num = self.mpd.track_num
+        if num > 0 and \
+                num != self._last_track_num:
+            if self._last_track_num > 0 and \
+               not self._suppress_chapter_announce \
+               and self.state.get(
+                   "chapter_announce", True):
+                speak(f"Chapter {num}")
+            self._last_track_num            = num
+            self._suppress_chapter_announce = False
+
     def _check_idle(self):
         idle = time.time() - self._last_touch
         radio = self.screens.get(SCREEN_RADIO)
@@ -233,7 +254,8 @@ class App:
             self._pre_clock_screen
         if self._pre_clock_screen not in (
                 SCREEN_CLOCK, SCREEN_RADIO,
-                SCREEN_PLAYER_HUGE,
+                SCREEN_PLAYER_LARGE,
+                SCREEN_PLAYER_LARGEST,
                 SCREEN_BOOKS_HUGE):
             self.nav.current = self._pre_clock_screen
         self.screens[
@@ -241,7 +263,7 @@ class App:
 
     def _is_huge(self):
         return self._current_screen in (
-            SCREEN_PLAYER_HUGE,
+            SCREEN_PLAYER_LARGEST,
             SCREEN_BOOKS_HUGE)
 
     def run(self):
@@ -297,8 +319,11 @@ class App:
                         self._go_to(SCREEN_RADIO)
                     elif event.key == pygame.K_6:
                         self._go_to(
-                            SCREEN_PLAYER_HUGE)
+                            SCREEN_PLAYER_LARGE)
                     elif event.key == pygame.K_7:
+                        self._go_to(
+                            SCREEN_PLAYER_LARGEST)
+                    elif event.key == pygame.K_8:
                         self._go_to(
                             SCREEN_BOOKS_HUGE)
                     elif event.key == pygame.K_c:
@@ -387,7 +412,9 @@ class App:
                 self._save_position()
 
             self._check_end_of_book()
+            self._check_chapter_change()
             self._check_idle()
+
             if self._clock_active:
                 self.clock.tick(2)
             else:

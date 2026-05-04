@@ -4,203 +4,300 @@ import time
 from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
-from constants import SCREEN_PLAYER_HUGE
+
+BG         = (10,  10,  18)
+CARD_BG    = (22,  22,  40)
+CARD_BDR   = (40,  40,  62)
+TITLE_COL  = (200, 184, 255)
+SUB_COL    = (136, 136, 160)
+CH_COL     = (106,  95, 192)
+TIME_COL   = (100, 100, 128)
+PROG_BG    = (30,  30,  48)
+PROG_FG    = (74,  63, 160)
+BTN_BIG    = (74,  63, 160)
+BTN_BIG_P  = (100,  88, 210)
+BTN_SM_BG  = (22,  22,  40)
+BTN_SM_BDR = (42,  42,  65)
+BTN_ICON   = (153, 153, 178)
+VOL_FG     = (48, 192,  96)
+VOL_BG     = (30,  30,  48)
 
 class PlayerScreen(BaseScreen):
     def __init__(self, app):
         super().__init__(app)
         self.mpd           = app.mpd
-        self._pressed      = None
-        self._press_time   = 0
-        self._long_fired   = False
-        self._last_long    = 0
         self._dragging_vol = False
+        self._pressed      = None
 
-        cy = 420
-        self.btn_prev = pygame.Rect(60,  cy-100, 280, 200)
-        self.btn_play = pygame.Rect(500, cy-110, 280, 220)
-        self.btn_next = pygame.Rect(940, cy-100, 280, 200)
-        self.vol_bar  = pygame.Rect(60,  555,   1160,  40)
+        cy   = 400
+        gap  = 28
+        r_sk = 58
+        r_ch = 70
+        r_pl = 92
+
+        # Total width: seek*2 + ch*2 + play + ch*2
+        # + seek*2 + gaps*4
+        total = (r_sk*2*2 + r_ch*2*2 +
+                 r_pl*2 + gap*4)
+        x0    = (1280 - total) // 2
+
+        self.btn_seek_back = pygame.Rect(
+            x0,
+            cy - r_sk, r_sk*2, r_sk*2)
+        self.btn_prev      = pygame.Rect(
+            x0 + r_sk*2 + gap,
+            cy - r_ch, r_ch*2, r_ch*2)
+        self.btn_play      = pygame.Rect(
+            x0 + r_sk*2 + r_ch*2 + gap*2,
+            cy - r_pl, r_pl*2, r_pl*2)
+        self.btn_next      = pygame.Rect(
+            x0 + r_sk*2 + r_ch*2 + r_pl*2 + gap*3,
+            cy - r_ch, r_ch*2, r_ch*2)
+        self.btn_seek_fwd  = pygame.Rect(
+            x0 + r_sk*2 + r_ch*2*2 + r_pl*2 + gap*4,
+            cy - r_sk, r_sk*2, r_sk*2)
+
+        self.vol_bar  = pygame.Rect(80, 535, 1100, 8)
+        self.prog_bar = pygame.Rect(60, 265, 1160, 8)
 
         self.all_btns = [
-            self.btn_prev, self.btn_play, self.btn_next
-        ]
+            self.btn_seek_back, self.btn_prev,
+            self.btn_play,
+            self.btn_next, self.btn_seek_fwd]
 
-    def _draw_prev(self, col, seeking=False):
-        cx, cy = self.btn_prev.centerx, \
-                 self.btn_prev.centery
-        s, sm = 72, 40
-        if seeking:
-            widgets.draw_triangle(self.screen, col,
-                [(cx-sm,   cy), (cx+sm, cy-sm),
-                 (cx+sm,   cy+sm)])
-            widgets.draw_triangle(self.screen, col,
-                [(cx-sm*2, cy), (cx,    cy-sm),
-                 (cx,      cy+sm)])
-            widgets.draw_text(self.screen, "SEEK",
-                              "small", col,
-                              cx, cy+sm+18)
+    def _fmt(self, s):
+        if s <= 0: return "--:--"
+        return f"{int(s)//60:02d}:{int(s)%60:02d}"
+
+    def _circle_btn(self, rect, bg, border,
+                    pressed=False):
+        cx, cy = rect.centerx, rect.centery
+        r = rect.w // 2
+        col = (min(bg[0]+30, 255),
+               min(bg[1]+30, 255),
+               min(bg[2]+30, 255)) \
+              if pressed else bg
+        pygame.draw.circle(self.screen, col,
+                           (cx, cy), r)
+        pygame.draw.circle(self.screen, border,
+                           (cx, cy), r, 1)
+
+    def _draw_seek_icon(self, rect, forward):
+        cx, cy = rect.centerx, rect.centery
+        col = BTN_ICON
+        off = 7
+        for i in range(2):
+            ox = (off * i) if forward \
+                 else (-off * i)
+            if forward:
+                pts = [(cx - 10 + ox, cy - 10),
+                       (cx + 2  + ox, cy),
+                       (cx - 10 + ox, cy + 10)]
+            else:
+                pts = [(cx + 10 + ox, cy - 10),
+                       (cx - 2  + ox, cy),
+                       (cx + 10 + ox, cy + 10)]
+            pygame.draw.lines(self.screen, col,
+                              False, pts, 2)
+        f = pygame.font.SysFont("sans", 18)
+        s = f.render("30s", True, (80, 80, 110))
+        sr = s.get_rect(centerx=cx, top=cy + 12)
+        self.screen.blit(s, sr)
+
+    def _draw_ch_icon(self, rect, forward):
+        cx, cy = rect.centerx, rect.centery
+        col    = BTN_ICON
+        bar_w, bar_h = 5, 26
+        tri_w  = 18
+        if forward:
+            pygame.draw.rect(self.screen, col,
+                (cx + tri_w - 4, cy - bar_h//2,
+                 bar_w, bar_h), border_radius=2)
+            widgets.draw_triangle(
+                self.screen, col, [
+                (cx - tri_w, cy - tri_w + 4),
+                (cx - tri_w, cy + tri_w - 4),
+                (cx + tri_w - 4, cy)])
         else:
             pygame.draw.rect(self.screen, col,
-                (cx-s-8, cy-s+12, 14, (s-12)*2))
-            widgets.draw_triangle(self.screen, col, [
-                (cx-s+16, cy),
-                (cx+s,    cy-s+12),
-                (cx+s,    cy+s-12)])
-            widgets.draw_text(self.screen,
-                              "hold to seek",
-                              "tiny", GREY,
-                              cx, cy+s+12)
+                (cx - tri_w - bar_w + 4,
+                 cy - bar_h//2,
+                 bar_w, bar_h), border_radius=2)
+            widgets.draw_triangle(
+                self.screen, col, [
+                (cx + tri_w, cy - tri_w + 4),
+                (cx + tri_w, cy + tri_w - 4),
+                (cx - tri_w + 4, cy)])
 
-    def _draw_next(self, col, seeking=False):
-        cx, cy = self.btn_next.centerx, \
-                 self.btn_next.centery
-        s, sm = 72, 40
-        if seeking:
-            widgets.draw_triangle(self.screen, col,
-                [(cx+sm,   cy), (cx-sm, cy-sm),
-                 (cx-sm,   cy+sm)])
-            widgets.draw_triangle(self.screen, col,
-                [(cx+sm*2, cy), (cx,    cy-sm),
-                 (cx,      cy+sm)])
-            widgets.draw_text(self.screen, "SEEK",
-                              "small", col,
-                              cx, cy+sm+18)
-        else:
-            widgets.draw_triangle(self.screen, col, [
-                (cx+s-16, cy),
-                (cx-s,    cy-s+12),
-                (cx-s,    cy+s-12)])
-            pygame.draw.rect(self.screen, col,
-                (cx+s-6, cy-s+12, 14, (s-12)*2))
-            widgets.draw_text(self.screen,
-                              "hold to seek",
-                              "tiny", GREY,
-                              cx, cy+s+12)
-
-    def _draw_play(self, col):
-        cx, cy = self.btn_play.centerx, \
-                 self.btn_play.centery
-        s = 85
+    def _draw_play_icon(self, rect):
+        cx, cy = rect.centerx, rect.centery
         if self.mpd.state == "play":
-            bw, bh = 30, s*2-16
-            pygame.draw.rect(self.screen, col,
-                (cx-bw*2+5, cy-bh//2, bw, bh))
-            pygame.draw.rect(self.screen, col,
-                (cx+bw-5,   cy-bh//2, bw, bh))
+            bw, bh = 10, 36
+            pygame.draw.rect(self.screen, WHITE,
+                (cx - bw - 4, cy - bh//2,
+                 bw, bh), border_radius=3)
+            pygame.draw.rect(self.screen, WHITE,
+                (cx + 4, cy - bh//2,
+                 bw, bh), border_radius=3)
         else:
-            widgets.draw_triangle(self.screen, col, [
-                (cx-s+18, cy-s+18),
-                (cx-s+18, cy+s-18),
-                (cx+s,    cy)])
-
-    def _draw_volume_slider(self):
-        x, y, w, h = (self.vol_bar.x, self.vol_bar.y,
-                      self.vol_bar.w, self.vol_bar.h)
-        vol  = self.mpd.volume
-        fill = int((vol / 100) * w)
-        pygame.draw.rect(self.screen, DARK_GREY,
-                         (x, y, w, h),
-                         border_radius=h//2)
-        if fill > 0:
-            pygame.draw.rect(self.screen, GREEN,
-                             (x, y, fill, h),
-                             border_radius=h//2)
-        pygame.draw.rect(self.screen, GREY,
-                         (x, y, w, h), 2,
-                         border_radius=h//2)
-        thumb_x = x + fill
-        pygame.draw.circle(self.screen, WHITE,
-                           (thumb_x, y + h//2),
-                           h//2 + 4)
-        pygame.draw.circle(self.screen, GREEN,
-                           (thumb_x, y + h//2),
-                           h//2)
-        widgets.draw_text(self.screen, "VOL",
-                          "tiny", GREY,
-                          x - 32, y + h//2)
-
-    def _col(self, btn):
-        if btn == self._pressed:
-            return YELLOW_DIM
-        if btn == self.btn_play:
-            return GREEN if self.mpd.state == "play" \
-                   else YELLOW
-        return WHITE
-
-    def _is_seeking(self, btn):
-        return (self._pressed == btn and
-                self._long_fired)
+            widgets.draw_triangle(
+                self.screen, WHITE, [
+                (cx - 16, cy - 26),
+                (cx - 16, cy + 26),
+                (cx + 22, cy)])
 
     def draw(self):
-        self.screen.fill(BLACK)
+        self.screen.fill(BG)
         mpd = self.mpd
 
-        def fmt(s):
-            if s <= 0: return "--:--"
-            return f"{int(s)//60:02d}:{int(s)%60:02d}"
-
+        # Book title
         book = os.path.basename(mpd.book) \
                if mpd.book else "No book loaded"
+        if len(book) > 45:
+            book = book[:42] + "..."
         widgets.draw_text(self.screen, book,
-                          "large", YELLOW, 640, 38)
+            "large", TITLE_COL, 640, 52)
 
-        chapter = mpd.title or "---"
-        if len(chapter) > 40:
-            chapter = chapter[:37] + "..."
-        widgets.draw_text(self.screen, chapter,
-                          "medium", WHITE, 640, 100)
+        # Chapter title
+        ch = mpd.title or "---"
+        if len(ch) > 48:
+            ch = ch[:45] + "..."
+        widgets.draw_text(self.screen, ch,
+            "medium", SUB_COL, 640, 110)
 
-        tn = (f"Chapter {mpd.track_num}"
-              f" of {mpd.track_total}"
-              if mpd.track_num > 0 else "---")
+        # Chapter number
+        if mpd.track_num > 0:
+            tn = (f"Chapter {mpd.track_num}"
+                  f" of {mpd.track_total}")
+        else:
+            tn = "---"
         widgets.draw_text(self.screen, tn,
-                          "normal", CYAN, 640, 158)
+            "normal", CH_COL, 640, 158)
 
-        widgets.draw_text(
-            self.screen,
-            f"{fmt(mpd.elapsed)}  /  "
-            f"{fmt(mpd.duration)}",
-            "mono", ORANGE, 640, 210)
+        # Time
+        t_str = (f"{self._fmt(mpd.elapsed)}"
+                 f"  /  "
+                 f"{self._fmt(mpd.duration)}")
+        widgets.draw_text(self.screen, t_str,
+            "mono", TIME_COL, 640, 208)
 
-        widgets.draw_progress_bar(
-            self.screen, 60, 250, 1160, 42,
-            mpd.elapsed, mpd.duration)
+        # Progress bar
+        px = self.prog_bar.x
+        py = self.prog_bar.y
+        pw = self.prog_bar.w
+        ph = self.prog_bar.h
+        pygame.draw.rect(self.screen, PROG_BG,
+            (px, py, pw, ph), border_radius=3)
+        if mpd.duration > 0:
+            fw = int((mpd.elapsed / mpd.duration)
+                     * pw)
+            fw = max(0, min(fw, pw))
+            if fw > 0:
+                pygame.draw.rect(self.screen,
+                    PROG_FG,
+                    (px, py, fw, ph),
+                    border_radius=3)
+            tx = px + fw
+            pygame.draw.circle(self.screen, WHITE,
+                (tx, py + ph//2), 14)
+            pygame.draw.circle(self.screen, PROG_FG,
+                (tx, py + ph//2), 10)
 
-        self._draw_prev(
-            self._col(self.btn_prev),
-            seeking=self._is_seeking(self.btn_prev))
-        self._draw_play(self._col(self.btn_play))
-        self._draw_next(
-            self._col(self.btn_next),
-            seeking=self._is_seeking(self.btn_next))
+        # Buttons
+        for btn in self.all_btns:
+            pressed = (self._pressed == btn)
+            if btn == self.btn_play:
+                self._circle_btn(btn, BTN_BIG,
+                    BTN_BIG, pressed)
+                self._draw_play_icon(btn)
+            elif btn in (self.btn_seek_back,
+                         self.btn_seek_fwd):
+                self._circle_btn(btn, BTN_SM_BG,
+                    BTN_SM_BDR, pressed)
+                self._draw_seek_icon(
+                    btn, btn == self.btn_seek_fwd)
+            else:
+                self._circle_btn(btn, BTN_SM_BG,
+                    BTN_SM_BDR, pressed)
+                self._draw_ch_icon(
+                    btn, btn == self.btn_next)
 
-        self._draw_volume_slider()
+        # Button labels
+        lf = pygame.font.SysFont("sans", 20)
+        for btn, lbl in [
+                (self.btn_seek_back, "seek"),
+                (self.btn_prev,      "prev"),
+                (self.btn_next,      "next"),
+                (self.btn_seek_fwd,  "seek")]:
+            s = lf.render(lbl, True, (60, 60, 85))
+            r = s.get_rect(
+                centerx=btn.centerx,
+                top=btn.bottom + 6)
+            self.screen.blit(s, r)
 
-        
+        # Volume slider
+        vx = self.vol_bar.x
+        vy = self.vol_bar.y
+        vw = self.vol_bar.w
+        vh = self.vol_bar.h
+        vol   = mpd.volume
+        vfill = int((vol / 100) * vw)
+        pygame.draw.rect(self.screen, VOL_BG,
+            (vx, vy, vw, vh), border_radius=4)
+        if vfill > 0:
+            pygame.draw.rect(self.screen, VOL_FG,
+                (vx, vy, vfill, vh),
+                border_radius=4)
+        pygame.draw.circle(self.screen, WHITE,
+            (vx + vfill, vy + vh//2), 14)
+        pygame.draw.circle(self.screen, VOL_FG,
+            (vx + vfill, vy + vh//2), 10)
+        f_vol = pygame.font.SysFont("sans", 22)
+        sv = f_vol.render("VOL", True,
+                          (60, 60, 85))
+        self.screen.blit(sv, (vx - 58, vy - 8))
+        sp = f_vol.render(f"{vol}%", True,
+                          (80, 80, 110))
+        self.screen.blit(sp,
+            (vx + vw + 12, vy - 8))
+
+        # BT badge
+        bt = self.app.bluetooth
+        if bt.connected_name:
+            bf = pygame.font.SysFont("sans", 20)
+            bs = bf.render(
+                f"BT  {bt.connected_name}",
+                True, (48, 192, 96))
+            bx = 1270 - bs.get_width()
+            pygame.draw.rect(self.screen,
+                (10, 40, 20),
+                (bx - 10, 10,
+                 bs.get_width() + 20, 30),
+                border_radius=15)
+            self.screen.blit(bs, (bx, 15))
 
         if not mpd.connected:
             widgets.draw_text(
                 self.screen, "MPD not connected",
-                "small", RED, 640, 608)
-
-        bt = self.app.bluetooth
-        if bt.connected_name:
-            widgets.draw_text(
-                self.screen,
-                f"BT: {bt.connected_name}",
-                "small", CYAN, 1240, 18,
-                align="right")
+                "small", RED, 640, 590)
 
     def handle_touch_down(self, x, y):
         super().handle_touch_down(x, y)
         self._dragging_vol = False
 
-        pb = pygame.Rect(60, 250, 1160, 42)
+        # Progress bar
+        pb = pygame.Rect(
+            self.prog_bar.x - 10,
+            self.prog_bar.y - 20,
+            self.prog_bar.w + 20,
+            self.prog_bar.h + 40)
         if pb.collidepoint(x, y) and \
            self.mpd.duration > 0:
-            pos = ((x - 60) / 1160
-                   * self.mpd.duration)
+            pos = ((x - self.prog_bar.x) /
+                   self.prog_bar.w *
+                   self.mpd.duration)
+            pos = max(0, min(pos,
+                             self.mpd.duration))
             self.mpd.seek_to(pos)
             m = int(pos) // 60
             s = int(pos) % 60
@@ -209,7 +306,13 @@ class PlayerScreen(BaseScreen):
                 f"{s} seconds")
             return
 
-        if self.vol_bar.collidepoint(x, y):
+        # Volume
+        vb = pygame.Rect(
+            self.vol_bar.x - 10,
+            self.vol_bar.y - 20,
+            self.vol_bar.w + 20,
+            self.vol_bar.h + 40)
+        if vb.collidepoint(x, y):
             vol = int((x - self.vol_bar.x) /
                       self.vol_bar.w * 100)
             self.mpd.set_volume(
@@ -219,9 +322,7 @@ class PlayerScreen(BaseScreen):
 
         for btn in self.all_btns:
             if btn.collidepoint(x, y):
-                self._pressed    = btn
-                self._press_time = time.time()
-                self._long_fired = False
+                self._pressed = btn
                 return
 
     def handle_touch_move(self, x, y):
@@ -237,22 +338,19 @@ class PlayerScreen(BaseScreen):
         btn = self._pressed
         self._pressed = None
 
-        
-
         if direction in ("swipe_left",
                          "swipe_right"):
-            self._long_fired = False
             return direction
 
-        if btn and not self._long_fired:
-            self._do_short_press(btn)
-        self._long_fired = False
+        if btn:
+            self._do_press(btn)
         return None
 
-    def _do_short_press(self, btn):
+    def _do_press(self, btn):
         from utils.speech import beep, speak_and_wait
         beep()
         mpd = self.mpd
+
         if btn == self.btn_play:
             if mpd.state != "play":
                 speak_and_wait("Playing",
@@ -264,37 +362,47 @@ class PlayerScreen(BaseScreen):
                 mpd.pause()
                 speak_and_wait("Paused",
                                stop_mpd=False)
+
+        elif btn == self.btn_seek_back:
+            self.app._suppress_chapter_announce \
+                = True
+            mpd.seek_back(30)
+            speak_and_wait("Seeking back",
+                           stop_mpd=False)
+
+        elif btn == self.btn_seek_fwd:
+            self.app._suppress_chapter_announce \
+                = True
+            mpd.seek_forward(30)
+            speak_and_wait("Seeking forward",
+                           stop_mpd=False)
+
         elif btn == self.btn_next:
-            speak_and_wait(
-                f"Chapter {mpd.track_num + 1}",
-                stop_mpd=True)
-            mpd.next_track()
+            if mpd.track_num < mpd.track_total:
+                self.app._suppress_chapter_announce\
+                    = True
+                speak_and_wait(
+                    f"Chapter {mpd.track_num + 1}",
+                    stop_mpd=True)
+                mpd.next_track()
+            else:
+                speak_and_wait("End of book",
+                               stop_mpd=False)
+
         elif btn == self.btn_prev:
-            speak_and_wait(
-                f"Chapter "
-                f"{max(1, mpd.track_num - 1)}",
-                stop_mpd=True)
-            mpd.prev_track()
+            if mpd.track_num > 1:
+                self.app._suppress_chapter_announce\
+                    = True
+                speak_and_wait(
+                    f"Chapter "
+                    f"{max(1, mpd.track_num - 1)}",
+                    stop_mpd=True)
+                mpd.prev_track()
+            else:
+                speak_and_wait(
+                    "Returning to chapter one",
+                    stop_mpd=True)
+                mpd.prev_track()
 
     def update(self):
-        btn = self._pressed
-        if not btn: return
-        held = time.time() - self._press_time
-
-        if btn in (self.btn_prev, self.btn_next):
-            if held >= 0.6:
-                if not self._long_fired:
-                    self._long_fired = True
-                    self._last_long  = time.time()
-                    self.app.speech.speak(
-                        "Seeking forward"
-                        if btn == self.btn_next
-                        else "Seeking back",
-                        pause_mpd=False)
-                if time.time() - \
-                        self._last_long >= 0.4:
-                    self._last_long = time.time()
-                    if btn == self.btn_next:
-                        self.mpd.seek_forward(30)
-                    else:
-                        self.mpd.seek_back(30)
+        pass

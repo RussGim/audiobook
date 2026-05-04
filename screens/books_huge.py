@@ -4,7 +4,7 @@ import subprocess
 from screens.base import BaseScreen
 from ui.colours import *
 from ui import widgets
-from constants import SCREEN_PLAYER_HUGE
+from constants import SCREEN_PLAYER_LARGEST
 
 VISIBLE_BOOKS = 2
 PAD           = 10
@@ -168,8 +168,7 @@ class BooksHugeScreen(BaseScreen):
                 f"Reading audio files{dots}",
                 "large", ORANGE, 640, 300)
             widgets.draw_text(
-                self.screen,
-                "Please wait",
+                self.screen, "Please wait",
                 "medium", GREY, 640, 380)
             return
 
@@ -199,11 +198,9 @@ class BooksHugeScreen(BaseScreen):
             pygame.draw.rect(self.screen, col,
                              r, border_radius=24)
             pygame.draw.rect(self.screen, border,
-                             r, 3,
-                             border_radius=24)
+                             r, 3, border_radius=24)
             self._draw_book_text(book, r)
 
-        # Up arrow
         can_up   = self._scroll > 0
         up_press = self._arrow_pressed == "up"
         up_col   = YELLOW if up_press \
@@ -212,21 +209,17 @@ class BooksHugeScreen(BaseScreen):
         up_bg    = (80, 80, 20) if up_press \
                    else (30, 30, 50) if can_up \
                    else (20, 20, 20)
-        pygame.draw.rect(
-            self.screen, up_bg,
+        pygame.draw.rect(self.screen, up_bg,
             self.btn_up, border_radius=20)
-        pygame.draw.rect(
-            self.screen, up_col,
+        pygame.draw.rect(self.screen, up_col,
             self.btn_up, 3, border_radius=20)
         cx = self.btn_up.centerx
         cy = self.btn_up.centery
-        widgets.draw_triangle(
-            self.screen, up_col, [
-            (cx,      cy - 60),
+        widgets.draw_triangle(self.screen, up_col, [
+            (cx, cy - 60),
             (cx - 60, cy + 50),
             (cx + 60, cy + 50)])
 
-        # Down arrow
         can_down = self._scroll + VISIBLE_BOOKS \
                    < len(self._books)
         dn_press = self._arrow_pressed == "down"
@@ -236,21 +229,17 @@ class BooksHugeScreen(BaseScreen):
         dn_bg    = (80, 80, 20) if dn_press \
                    else (30, 30, 50) if can_down \
                    else (20, 20, 20)
-        pygame.draw.rect(
-            self.screen, dn_bg,
+        pygame.draw.rect(self.screen, dn_bg,
             self.btn_down, border_radius=20)
-        pygame.draw.rect(
-            self.screen, dn_col,
+        pygame.draw.rect(self.screen, dn_col,
             self.btn_down, 3, border_radius=20)
         cx = self.btn_down.centerx
         cy = self.btn_down.centery
-        widgets.draw_triangle(
-            self.screen, dn_col, [
-            (cx,      cy + 60),
+        widgets.draw_triangle(self.screen, dn_col, [
+            (cx, cy + 60),
             (cx - 60, cy - 50),
             (cx + 60, cy - 50)])
 
-        # Counter between arrows
         mid_y = (self.btn_up.bottom +
                  self.btn_down.top) // 2
         widgets.draw_text(
@@ -357,7 +346,7 @@ class BooksHugeScreen(BaseScreen):
         self.app.state["chapter"]  = None
         self.app.state["position"] = 0.0
         save(self.app.state)
-        self.app._go_to(SCREEN_PLAYER_HUGE)
+        self.app._go_to(SCREEN_PLAYER_LARGEST)
 
     def handle_touch_move(self, x, y):
         pass

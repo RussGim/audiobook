@@ -3,14 +3,21 @@ import threading
 import time
 import pygame
 
-_current  = None
-_mpd_ref  = None
+_current       = None
+_mpd_ref       = None
+_voice_enabled = True
 
 def set_mpd(mpd_client):
     global _mpd_ref
     _mpd_ref = mpd_client
 
+def set_voice_prompts(enabled):
+    global _voice_enabled
+    _voice_enabled = enabled
+
 def beep(freq=800, ms=40):
+    if not _voice_enabled:
+        return
     try:
         import numpy as np
         vol_scale = (_mpd_ref.volume / 100) \
@@ -32,27 +39,24 @@ def beep(freq=800, ms=40):
         print(f"Beep error: {e}")
 
 def _do_speak(text):
-    """Speak using espeak-ng, scaled from current MPD volume."""
+    if not _voice_enabled:
+        return
     try:
         import shlex
         import re
 
         vol = 70
-
-        # Prefer live MPD volume
         try:
             out = subprocess.check_output(
                 ["mpc", "status"],
                 text=True,
-                stderr=subprocess.DEVNULL
-            )
+                stderr=subprocess.DEVNULL)
             m = re.search(r"volume:\s*(\d+)%", out)
             if m:
                 vol = int(m.group(1))
         except Exception:
             pass
 
-        # espeak amplitude is 0-200
         amp = int(max(10, min(100, vol)) * 1.5)
         amp = max(15, min(180, amp))
 
@@ -63,10 +67,8 @@ def _do_speak(text):
         print(f"Speech error: {e}")
 
 def speak_and_wait(text, stop_mpd=True):
-    """
-    Pause MPD if needed, speak, return.
-    Caller responsible for resuming playback.
-    """
+    if not _voice_enabled:
+        return
     mpd = _mpd_ref
     if stop_mpd and mpd and \
        mpd.state == "play":
@@ -76,10 +78,8 @@ def speak_and_wait(text, stop_mpd=True):
 
 def speak(text, interrupt=True, resume=True,
           pause_mpd=True):
-    """
-    Non-blocking speak. Pauses MPD if playing
-    and pause_mpd=True, resumes after if resume=True.
-    """
+    if not _voice_enabled:
+        return
     global _current
     if interrupt and _current and \
        _current.poll() is None:
