@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
-import pygame
 import sys
+import logging
+
+logging.basicConfig(
+    filename="/home/pi/player.log",
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(message)s")
+
+def handle_exception(exc_type, exc_value, exc_tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    logging.critical("Uncaught exception",
+        exc_info=(exc_type, exc_value, exc_tb))
+
+sys.excepthook = handle_exception
+
+import pygame
 import os
 import time
 
@@ -422,5 +438,10 @@ class App:
 
 
 if __name__ == "__main__":
-    app = App()
-    app.run()
+    try:
+        app = App()
+        app.run()
+    except Exception as e:
+        logging.critical(
+            "Fatal error", exc_info=True)
+        raise
