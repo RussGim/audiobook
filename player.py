@@ -4,7 +4,7 @@ import logging
 
 logging.basicConfig(
     filename="/home/pi/player.log",
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format="%(asctime)s %(levelname)s %(message)s")
 
 def handle_exception(exc_type, exc_value, exc_tb):
